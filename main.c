@@ -66,9 +66,110 @@ cpu_util(const char *s) {
     return util;
 }
 
-int
-main(int argc, char *argv[]) {
+void memory_stats(void) {
+    const char *const PROC_MEMINFO = "/proc/meminfo";
+    FILE *mem_file;
+    char line[1024];
+    unsigned long mem_total = 0, mem_free = 0, mem_available = 0, buffers = 0, cached = 0;
+
+    if (!(mem_file = fopen(PROC_MEMINFO, "r"))) {
+        TRACE("fopen() - Memory");
+        return;
+    }
+
+    while (fgets(line, sizeof(line), mem_file)) {
+        if (strncmp(line, "MemTotal:", 9) == 0) {
+            sscanf(line + 9, "%lu", &mem_total);
+        } else if (strncmp(line, "MemFree:", 8) == 0) {
+            sscanf(line + 8, "%lu", &mem_free);
+        } else if (strncmp(line, "MemAvailable:", 13) == 0) {
+            sscanf(line + 13, "%lu", &mem_available);
+        } else if (strncmp(line, "Buffers:", 8) == 0) {
+            sscanf(line + 8, "%lu", &buffers);
+        } else if (strncmp(line, "Cached:", 7) == 0) {
+            sscanf(line + 7, "%lu", &cached);
+        }
+    }
+
+    fclose(mem_file);
+
+    printf(" | Memory Used Percentage: %5.1f%%", (double) ((mem_total - mem_free) - (buffers + cached)) / mem_total * 100);
+}
+
+void network_stats(char *interface) {
+    const char *const PROC_NET_DEV = "/proc/net/dev";
+    FILE *net_file;
+    char line[1024];
+    int i;
+
+    if (!(net_file = fopen(PROC_NET_DEV, "r"))) {
+        TRACE("fopen() - Network");
+        return;
+    }
+
+    for (i = 0; i < 2; ++i) {
+        if (!fgets(line, sizeof(line), net_file)) {
+            TRACE("fgets() - Network");
+            fclose(net_file);
+            return;
+        }
+    }
+
+    while (fgets(line, sizeof(line), net_file)) {
+        char iface[32];
+        unsigned long recv, send;
+
+        if (sscanf(line, "%s %lu %*u %*u %*u %*u %*u %*u %*u %*u %lu", iface, &recv, &send) == 3) {
+            if (strcmp(iface, interface) == 0) {
+                printf(" | %s Receive: %lu bytes | %s Send: %lu bytes", interface, recv, interface, send);
+                break;
+            }
+        }
+    }
+
+    fclose(net_file);
+}
+
+void disk_stats(char *disk) {
+    const char *const PROC_DISK_STATS = "/proc/diskstats";
+    FILE *disk_file;
+    char line[1024];
+    int i;
+
+    if (!(disk_file = fopen(PROC_DISK_STATS, "r"))) {
+        TRACE("fopen() - Disk");
+        return;
+    }
+
+    for (i = 0; i < 2; ++i) {
+        if (!fgets(line, sizeof(line), disk_file)) {
+            TRACE("fgets() - Disk");
+            fclose(disk_file);
+            return;
+        }
+    }
+
+    while (fgets(line, sizeof(line), disk_file)) {
+        int major, minor;
+        char dev_name[32];
+        unsigned long rd_ios, wr_ios;
+
+        if (sscanf(line, "%d %d %s %*u %*u %lu %*u %*u %*u %*u %lu", &major, &minor, dev_name, &rd_ios, &wr_ios) != 5) {
+            continue;
+        }
+
+        if (strcmp(dev_name, disk) == 0) {
+            printf(" | %s Read: %lu ops | %s Write: %lu ops", disk, rd_ios, disk, wr_ios);
+            break;
+        }
+    }
+
+    fclose(disk_file);
+}
+
+int main(int argc, char *argv[]) {
     const char *const PROC_STAT = "/proc/stat";
+
     char line[1024];
     FILE *file;
 
@@ -79,18 +180,25 @@ main(int argc, char *argv[]) {
         TRACE("signal()");
         return -1;
     }
+
     while (!done) {
         if (!(file = fopen(PROC_STAT, "r"))) {
-            TRACE("fopen()");
+            TRACE("fopen() - CPU");
             return -1;
         }
         if (fgets(line, sizeof(line), file)) {
-            printf("\r%5.1f%%", cpu_util(line));
+            printf("\rCPU Utilization: %5.1f%%", cpu_util(line));
             fflush(stdout);
         }
-        us_sleep(500000);
         fclose(file);
+
+        memory_stats();
+        network_stats("eth0:");
+        disk_stats("sda");
+
+        us_sleep(500000);
     }
-    printf("\rDone!   \n");
+
+    printf("\rDone!                                                                                            \n");
     return 0;
 }
